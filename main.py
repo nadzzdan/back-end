@@ -1,9 +1,11 @@
 import os
+import time
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, Integer, String
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
+from sqlalchemy.exc import OperationalError
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -20,7 +22,7 @@ DB_PASSWORD = os.getenv("DB_PASSWORD")
 DATABASE_URL = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
 # SQLAlchemy setup
-engine = create_engine(DATABASE_URL)
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()
 
@@ -30,8 +32,21 @@ class TextEntry(Base):
     id = Column(Integer, primary_key=True, index=True)
     content = Column(String(255), nullable=False)
 
-# Create table (once)
-Base.metadata.create_all(bind=engine)
+# Function to initialize database with retry logic
+def init_db(retries=5, delay=2):
+    """Initialize database tables with retry logic"""
+    for attempt in range(retries):
+        try:
+            Base.metadata.create_all(bind=engine)
+            print(f"Database initialized successfully on attempt {attempt + 1}")
+            return
+        except OperationalError as e:
+            if attempt < retries - 1:
+                print(f"Database connection attempt {attempt + 1} failed. Retrying in {delay}s...")
+                time.sleep(delay)
+            else:
+                print(f"Failed to connect to database after {retries} attempts")
+                raise
 
 # Pydantic schemas
 class EntryIn(BaseModel):
@@ -42,7 +57,7 @@ class EntryOut(BaseModel):
     content: str
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 # Dependency
 def get_db():
@@ -63,6 +78,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Initialize database on startup
+@app.on_event("startup")
+def startup_event():
+    init_db()
 
 # Routes
 @app.post("/entries/", response_model=EntryOut)
