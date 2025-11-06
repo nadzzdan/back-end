@@ -33,6 +33,7 @@ class TextEntry(Base):
     content = Column(String(255), nullable=False)
 
 # Function to initialize database with retry logic
+# test comments
 def init_db(retries=5, delay=2):
     """Initialize database tables with retry logic"""
     for attempt in range(retries):
